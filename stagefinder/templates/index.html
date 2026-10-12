@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Stage Finder — Data · Île-de-France</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --line:#e3e6ea; --txt:#1d2430; --muted:#6b7280; --acc:#2563eb; --ok:#16a34a; --warn:#d97706; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--txt); }
+  header { display:flex; gap:16px; align-items:center; padding:12px 20px; background:var(--card); border-bottom:1px solid var(--line); position:sticky; top:0; z-index:5; flex-wrap:wrap; }
+  header h1 { font-size:18px; margin:0 12px 0 0; }
+  .stats { color:var(--muted); font-size:13px; }
+  .stats b { color:var(--txt); }
+  button { border:1px solid var(--line); background:#fff; color:var(--txt); padding:6px 12px; border-radius:6px; cursor:pointer; font:inherit; }
+  button.primary { background:var(--acc); color:#fff; border-color:var(--acc); }
+  button:disabled { opacity:.5; cursor:default; }
+  .filters { display:flex; gap:10px; padding:12px 20px; flex-wrap:wrap; align-items:center; }
+  .filters input, .filters select { padding:6px 8px; border:1px solid var(--line); border-radius:6px; font:inherit; background:#fff; }
+  .filters input[type=search] { min-width:260px; }
+  #log { margin:0 20px; padding:8px 12px; background:#fff; border:1px solid var(--line); border-radius:6px; font:12px/1.4 ui-monospace,monospace; max-height:140px; overflow:auto; white-space:pre-wrap; display:none; }
+  main { padding:0 20px 40px; }
+  .job { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:12px 14px; margin-bottom:8px; display:grid; grid-template-columns:64px 1fr auto; gap:12px; align-items:start; }
+  .job.new { border-left:4px solid var(--acc); }
+  .job.applied { border-left:4px solid var(--ok); }
+  .job.saved { border-left:4px solid var(--warn); }
+  .score { font-size:22px; font-weight:700; text-align:center; }
+  .score small { display:block; font-size:10px; color:var(--muted); font-weight:400; }
+  .title a { font-size:15px; font-weight:600; color:var(--txt); text-decoration:none; }
+  .title a:hover { color:var(--acc); }
+  .meta { color:var(--muted); font-size:13px; margin-top:2px; }
+  .meta span + span::before { content:" · "; }
+  .tags { margin-top:6px; display:flex; flex-wrap:wrap; gap:4px; }
+  .tag { font-size:11px; padding:1px 7px; border-radius:10px; background:#eef2ff; color:#3730a3; }
+  .tag.neg { background:#fee2e2; color:#991b1b; }
+  .tag.src { background:#f3f4f6; color:#374151; }
+  .actions { display:flex; flex-direction:column; gap:6px; }
+  .actions button { padding:4px 10px; font-size:12px; }
+  details summary { cursor:pointer; color:var(--muted); font-size:12px; margin-top:6px; }
+  .desc { white-space:pre-wrap; font-size:13px; color:#374151; margin-top:6px; max-height:300px; overflow:auto; }
+  .empty { color:var(--muted); padding:40px; text-align:center; }
+  .badge { background:var(--acc); color:#fff; border-radius:10px; padding:0 7px; font-size:12px; }
+  textarea.notes { width:100%; margin-top:6px; font:inherit; font-size:12px; border:1px solid var(--line); border-radius:6px; padding:4px 6px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Stage Finder</h1>
+  <button class="primary" id="refresh">Actualiser les offres</button>
+  <a href="/export.csv"><button>Export CSV</button></a>
+  <span class="stats" id="stats"></span>
+</header>
+<div class="filters">
+  <input type="search" id="q" placeholder="Rechercher (titre, entreprise, texte)…">
+  <select id="status">
+    <option value="active">Actives (non masquées)</option>
+    <option value="new">Nouvelles</option>
+    <option value="saved">Sauvegardées</option>
+    <option value="applied">Candidatures envoyées</option>
+    <option value="hidden">Masquées</option>
+    <option value="all">Toutes</option>
+  </select>
+  <select id="source">
+    <option value="">Toutes sources</option>
+    <option value="linkedin">LinkedIn</option>
+    <option value="wttj">Welcome to the Jungle</option>
+    <option value="hellowork">HelloWork</option>
+    <option value="francetravail">France Travail</option>
+  </select>
+  <label>Score min <input type="number" id="min" value="0" style="width:70px"></label>
+  <label><input type="checkbox" id="dupes"> montrer doublons</label>
+  <span id="count" class="stats"></span>
+</div>
+<pre id="log"></pre>
+<main id="list"><div class="empty">Chargement…</div></main>
+
+<script>
+const $ = s => document.querySelector(s);
+const SRC = {linkedin:'LinkedIn', wttj:'WTTJ', hellowork:'HelloWork', francetravail:'France Travail'};
+let timer = null;
+
+function esc(s){ return (s||'').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function ago(iso){ if(!iso) return ''; const d=(Date.now()-new Date(iso))/864e5; return d<1?"aujourd'hui":d<2?'hier':Math.floor(d)+' j'; }
+
+async function load(){
+  const p = new URLSearchParams({status:$('#status').value, source:$('#source').value, q:$('#q').value, min_score:$('#min').value||0, dupes:$('#dupes').checked?'1':'0'});
+  const r = await fetch('/api/jobs?'+p); const d = await r.json();
+  const c = d.stats.counts, lr = d.stats.last_run;
+  $('#stats').innerHTML = `<b>${c.total||0}</b> offres · <span class="badge">${c.new||0} nouvelles</span> · ${c.saved||0} sauvegardées · ${c.applied||0} candidatures` + (lr?` · dernière actualisation ${new Date(lr.finished).toLocaleString('fr-FR')}`:' · jamais actualisé');
+  $('#count').textContent = d.jobs.length + ' affichées';
+  if(!d.jobs.length){ $('#list').innerHTML = '<div class="empty">Aucune offre. Cliquez sur « Actualiser les offres ».</div>'; return; }
+  $('#list').innerHTML = d.jobs.map(j => {
+    const dur = (j.duration_min||j.duration_max) ? `${j.duration_min||''}${j.duration_min&&j.duration_max&&j.duration_min!=j.duration_max?'–'+j.duration_max:''} mois` : '';
+    const sal = j.extra && j.extra.salary_min ? `${j.extra.salary_min}${j.extra.salary_max?'–'+j.extra.salary_max:''} €/mois` : '';
+    const tags = (j.reasons||[]).slice(0,10).map(t => `<span class="tag ${t.startsWith('-')?'neg':''}">${esc(t)}</span>`).join('');
+    const also = (j.also_on||[]).map(a => ` · <a href="${esc(a.url)}" target="_blank" rel="noopener">${SRC[a.source]||a.source}</a>`).join('');
+    return `<div class="job ${j.status}" data-key="${esc(j.key)}">
+      <div class="score">${Math.round(j.score)}<small>score</small></div>
+      <div>
+        <div class="title"><a href="${esc(j.url)}" target="_blank" rel="noopener" data-seen="${esc(j.key)}">${esc(j.title)}</a></div>
+        <div class="meta"><span><b>${esc(j.company)}</b></span><span>${esc(j.location)}</span>${dur?`<span>${dur}</span>`:''}${sal?`<span>${sal}</span>`:''}<span>${esc(j.contract)}</span>${j.posted_at?`<span>publié ${ago(j.posted_at)}</span>`:''}<span>vu ${ago(j.first_seen)}</span></div>
+        <div class="tags"><span class="tag src">${SRC[j.source]||j.source}${also}</span>${tags}</div>
+        <details><summary>Description${j.notes?' · note: '+esc(j.notes.slice(0,60)):''}</summary>
+          <textarea class="notes" rows="2" placeholder="Mes notes…" data-notes="${esc(j.key)}">${esc(j.notes)}</textarea>
+          <div class="desc">${esc(j.description||j.summary||'(pas de description)')}</div></details>
+      </div>
+      <div class="actions">
+        <button data-st="saved">★ Sauver</button>
+        <button data-st="applied">✓ Candidaté</button>
+        <button data-st="hidden">✕ Masquer</button>
+        ${j.status!=='new'?'<button data-st="new">↺ Réinitialiser</button>':''}
+      </div></div>`;
+  }).join('');
+}
+
+async function patch(key, body){ await fetch('/api/jobs/'+encodeURIComponent(key), {method:'PATCH', headers:{'content-type':'application/json'}, body:JSON.stringify(body)}); }
+
+$('#list').addEventListener('click', async e => {
+  const b = e.target.closest('button[data-st]'); const a = e.target.closest('a[data-seen]');
+  if(b){ const key = b.closest('.job').dataset.key; await patch(key, {status:b.dataset.st}); load(); }
+  if(a){ const job = a.closest('.job'); if(job.classList.contains('new')){ await patch(job.dataset.key, {status:'seen'}); job.classList.remove('new'); } }
+});
+$('#list').addEventListener('change', async e => { if(e.target.matches('textarea[data-notes]')) await patch(e.target.dataset.notes, {notes:e.target.value}); });
+['status','source','min','dupes'].forEach(id => $('#'+id).addEventListener('change', load));
+$('#q').addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(load, 300); });
+
+async function poll(){
+  const s = await (await fetch('/api/status')).json();
+  $('#log').style.display = 'block'; $('#log').textContent = s.log.join('\n'); $('#log').scrollTop = 1e9;
+  if(s.running){ setTimeout(poll, 1500); } else { $('#refresh').disabled = false; $('#refresh').textContent = 'Actualiser les offres'; load(); }
+}
+$('#refresh').addEventListener('click', async () => {
+  $('#refresh').disabled = true; $('#refresh').textContent = 'Recherche en cours…';
+  await fetch('/api/refresh', {method:'POST'}); poll();
+});
+fetch('/api/status').then(r=>r.json()).then(s => { if(s.running){ $('#refresh').disabled = true; $('#refresh').textContent='Recherche en cours…'; poll(); } });
+load();
+</script>
+</body>
+</html>
