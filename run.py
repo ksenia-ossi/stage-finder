@@ -17,6 +17,8 @@ def cmd_search(args):
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     conn = db.connect()
     res = search.run(conn=conn, fetch_details=not args.no_details)
+    if not args.no_details:
+        search.fetch_missing_details(conn=conn, progress=print)
     rows = db.list_jobs(conn, status="active", limit=args.top)
     print(f"\n{res['found']} offres, {res['new']} nouvelles. Top {len(rows)}:\n")
     for r in rows:

@@ -17,8 +17,10 @@ lock = threading.Lock()
 def _refresh():
     state["log"] = []
     try:
-        res = search.run(conn=db.connect(), progress=lambda m: state["log"].append(m))
+        c = db.connect()
+        res = search.run(conn=c, progress=lambda m: state["log"].append(m))
         state["result"] = res
+        search.fetch_missing_details(conn=c, progress=lambda m: state["log"].append(m))
     except Exception as e:  # noqa: BLE001
         log.exception("refresh failed")
         state["log"].append(f"Erreur: {e}")

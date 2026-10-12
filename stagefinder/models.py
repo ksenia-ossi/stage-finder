@@ -33,7 +33,9 @@ class Job:
 
     @property
     def dedupe_key(self) -> str:
-        return f"{slugify(self.company)}|{slugify(self.title)}"
+        company = slugify(self.company).split("-")[0]
+        title = re.sub(r"\b(h-f|f-h|h-f-x|f-m|m-f|m-w|w-m|x)\b", "", slugify(self.title)).strip("-")
+        return f"{company}|{title}"
 
     @property
     def text(self) -> str:

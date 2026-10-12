@@ -65,7 +65,8 @@ def run(cfg: dict | None = None, conn=None, progress=lambda msg: None, fetch_det
         kept.append(j)
     prog(f"Filtré: {len(kept)} gardées, {skipped} écartées (alternance/CDI/hors IDF)")
 
-    budget = cfg.get("max_detail_fetches_per_run", 80)
+    budget = cfg.get("max_detail_fetches_per_run", 150)
+    kept.sort(key=lambda j: -score(j, cfg)[0])
     new_count = 0
     for j in kept:
         existing = db.get_job(conn, j.key)
@@ -87,3 +88,24 @@ def run(cfg: dict | None = None, conn=None, progress=lambda msg: None, fetch_det
     conn.commit()
     prog(f"Terminé: {len(kept)} offres, {new_count} nouvelles")
     return {"found": len(kept), "new": new_count, "skipped": skipped, "log": log_lines}
+
+
+def fetch_missing_details(cfg: dict | None = None, conn=None, progress=lambda msg: None, limit: int = 1000) -> int:
+    """Load descriptions for jobs that were saved without them (score is recomputed)."""
+    cfg = cfg or load_config()
+    conn = conn or db.connect()
+    rows = conn.execute("SELECT * FROM jobs WHERE details_fetched=0 AND status NOT IN ('hidden') "
+                        "ORDER BY score DESC LIMIT ?", (limit,)).fetchall()
+    done = 0
+    for i, row in enumerate(rows, 1):
+        j = db.job_from_row(row)
+        if SOURCES[j.source].fetch_details(j):
+            s, reasons = score(j, cfg)
+            db.upsert(conn, j, s, reasons)
+            done += 1
+        if i % 10 == 0 or i == len(rows):
+            conn.commit()
+            progress(f"Descriptions chargées: {i}/{len(rows)}")
+        time.sleep(0.6)
+    conn.commit()
+    return done
